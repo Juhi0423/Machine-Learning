@@ -1,0 +1,268 @@
+---
+title: "Amazon"
+author: "Anshul Jain"
+date: "15 May 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(rpart)
+library(tree)
+library(rattle)
+library(caret)
+library(dplyr)
+library(aod)
+library(stringr)
+library(randomForest)
+library(naivebayes)
+library(e1071)
+library(BBmisc)
+library(class)
+```
+
+
+```{r}
+amazon_train = read.csv("C:/Users/Administrator/Desktop/Machine Learning/Practice/Amazon/train.csv")
+
+amazon_test = read.csv("C:/Users/Administrator/Desktop/Machine Learning/Practice/Amazon/test.csv")
+
+amazon_sample = read.csv("C:/Users/Administrator/Desktop/Machine Learning/Practice/Amazon/sampleSubmission.csv")
+colnames(amazon_test)
+colnames(amazon_train)
+amazon_train
+```
+
+
+```{r}
+amazon = createDataPartition(y = amazon_train$ACTION, p = 0.75, list = F)
+amazon_new_train = amazon_train[amazon,]
+amazon_new_test = amazon_train[-amazon,]
+```
+
+
+##Decision tree model
+```{r}
+amazon_new_train$ACTION = factor(amazon_new_train$ACTION)
+tree_model = rpart(ACTION~., data = amazon_new_train, method = "class", control = rpart.control(cp = 0))
+
+printcp(tree_model)
+
+#Post pruning
+cp_value = tree_model$cptable[which.min(tree_model$cptable[,"xerror"]),"CP"]
+
+cp_value
+prune_model = prune(tree_model, cp = cp_value)
+plotcp(prune_model)
+
+pred = as.numeric(as.character(predict(prune_model, amazon_new_test, type = "class")))
+class(pred)
+#pred = data.frame(pred)
+#pred
+
+mean(pred == amazon_new_test$ACTION)
+
+pred2 = as.numeric(as.character(predict(prune_model, amazon_test, type = "class")))
+
+length(pred2)
+
+final_rpart = data.frame(Id = 1:nrow(amazon_test), Action = pred2)
+final_rpart
+write.csv(final_rpart,"C:/Users/Administrator/Desktop/Machine Learning/Practice/Amazon/D_model.csv", row.names = FALSE)
+```
+
+
+## Logistic regression model
+```{r}
+summary(amazon_new_train)
+logit_model = glm(ACTION~., data = amazon_new_train, family = "binomial")
+logit_model
+summary(logit_model)
+
+log_pred = predict(logit_model, amazon_new_test)
+log_pred = as.data.frame(log_pred)
+g = ifelse(log_pred$log_pred>0.5,1,0)
+table(g)
+
+log_pred1 = predict(logit_model, amazon_test)
+log_pred1 = as.data.frame(log_pred1)
+g1 = ifelse(log_pred1$log_pred1>0.5,1,0)
+table(g1)
+
+mean(g == amazon_new_test$ACTION)*100
+
+df = data.frame(Id = amazon_test$id,Action = log_pred1$log_pred1)
+write.csv(df,"C:/Users/Administrator/Desktop/Machine Learning/Practice/Amazon/Log_model.csv")
+```
+
+
+```{r}
+confint(logit_model)
+hg <- anova(logit_model, test = "Chisq")
+jh <- as.data.frame(hg[5])
+jh$col = row.names(jh)
+```
+```{r}
+var = ("ACTION~")
+jh = jh[which(jh$`Pr(>Chi)`< 0.05),]
+for (i in seq(1,nrow(jh))) {
+  var = str_c(var,jh[i,"col"],sep= "+")
+  #print(jh[i,"col"])
+}
+var
+var2 <- str_replace(var, "[+]","")
+
+model_logit = glm(var2[1], data = amazon_new_train, family = binomial(link = "logit"))
+
+anova(model_logit, test = "Chisq")
+
+##To chech the good fit between previous and this model
+anova(logit_model, model_logit, test = "Chisq")
+## we got p value = 0.3491 which is > 0.05 Therefore it is a good fit
+## and as it is a good fit we will use this model for prediction
+
+
+log_pred2 = predict(model_logit, amazon_new_test, type = "response")
+log_pred2 = as.data.frame(log_pred2)
+
+d = ifelse(log_pred2$log_pred2<0.5,0,1)
+table(d)
+
+log_pred3 = predict(model_logit, amazon_test, type= "response")
+log_pred3 = as.data.frame(log_pred3)
+d1 = ifelse(log_pred2$log_pred2<0.5,0,1)
+table(d1)
+
+mean(d == amazon_new_test$ACTION)*100
+
+confusionMatrix(d,amazon_new_test$ACTION, positive = "1")
+df1 = data.frame(Id = amazon_test$id,Action = log_pred3$log_pred3)
+write.csv(df1,"C:/Users/Administrator/Desktop/Machine Learning/Practice/Amazon/Logit_model.csv", row.names = FALSE)
+```
+
+## Random Forest
+```{r}
+amazon_new_train$ACTION = factor(amazon_new_train$ACTION)
+mtry = round(sqrt(length(colnames(amazon_new_train))-1))
+model_rf = randomForest(ACTION~. , data = amazon_new_train,
+                        mtry = mtry,
+                        ntree =100)
+model_rf
+
+amazon_new_test$ACTION = factor(amazon_new_test$ACTION)
+pred = predict(model_rf, amazon_new_test)
+mean(pred == amazon_new_test$ACTION)
+
+
+pred2 = predict(model_rf, amazon_test)
+mean(pred2 == amazon_new_test$ACTION)
+
+pred2 = as.data.frame(pred2)
+cm = confusionMatrix(pred, amazon_new_test$ACTION, positive = "1")
+cm$overall['Accuracy']
+cm$byClass['Sensitivity']
+
+
+df3 = data.frame(Id = amazon_test$id, Action = pred2$pred2)
+write.csv(df3,"C:/Users/Administrator/Desktop/Machine Learning/Practice/Amazon/Rf_model.csv", row.names = FALSE)
+```
+
+```{r}
+acc_vals = c()
+sens_vals =c()
+ntree = 10:200
+mtry = round(sqrt(length(colnames(amazon_new_train))-1))
+for (i in ntree) {
+  amazon_new_train$ACTION = factor(amazon_new_train$ACTION)
+  mtry = round(sqrt(length(colnames(amazon_new_train))-1))
+  model_rf = randomForest(ACTION~. , data = amazon_new_train,
+                          mtry = mtry,
+                          ntree = i)
+  model_rf
+  
+  amazon_new_test$ACTION = factor(amazon_new_test$ACTION)
+  pred = predict(model_rf, amazon_new_test)
+  cm = confusionMatrix(pred, amazon_new_test$ACTION, positive = "1")
+  acc = cm$overall['Accuracy']
+  sens = cm$byClass['Sensitivity']  
+  acc_vals = append(acc_vals, acc)
+  sens_vals = append(sens_vals, sens)
+  
+}
+
+head(acc_vals)
+head(sens_vals)
+```
+
+```{r}
+library(adabag)
+model_boost = boosting(ACTION~., data = amazon_new_train)
+boost_pred = predict(model_boost, amazon_new_test)
+mean(boost_pred$class == amazon_new_test$ACTION)
+
+boost_pred2 = predict(model_boost, amazon_test)
+mean(boost_pred2$class == amazon_new_test$ACTION)
+df4 = data.frame(Id = amazon_test$id, Action = boost_pred2$class)
+write.csv(df4,"C:/Users/Administrator/Desktop/Machine Learning/Practice/Amazon/Boost_model.csv", row.names = FALSE)
+```
+
+
+Naives Bayes
+```{r}
+nai_model1 = naiveBayes(ACTION~RESOURCE, data = amazon_new_train)
+View(predict(nai_model1, amazon_new_test, type = 'raw'))
+nai_pred = data.frame(predict(nai_model1, amazon_new_test, type = 'raw'))
+norm_pred =  ifelse(nai_pred$X0>nai_pred$X1, 0,1)
+df = data.frame(amazon_new_test$ACTION, norm_pred)  
+mean(df$amazon_new_test.ACTION == df$norm_pred)
+nai1_pred = data.frame(predict(nai_model1, amazon_test, type = 'raw'))
+
+
+
+nai_model2 = naiveBayes(ACTION~RESOURCE+ROLE_FAMILY, data = amazon_new_train)
+
+View(predict(nai_model2, amazon_new_test, type = 'raw'))
+
+nai_pred2 = data.frame(predict(nai_model2, amazon_new_test, type = 'raw'))
+
+norm_pred2 = ifelse(nai_pred2$X0>nai_pred2$X1, 0, 1)
+
+df1 = data.frame(amazon_new_test$ACTION, norm_pred2)
+
+mean(df1$amazon_new_test.ACTION==df1$norm_pred2)
+
+nai2_pred2 = data.frame(predict(nai_model2, amazon_test, type = 'raw'))
+
+norm2_pred2 = ifelse(nai2_pred2$X0>nai2_pred2$X1, 0, 1)
+pred = data.frame(norm2_pred2)
+
+df5 = data.frame(Id = amazon_test$id, Action = pred$norm2_pred2)
+
+#write.csv(df5,"C:/Users/Administrator/Desktop/Machine Learning/Practice/Amazon/Nai_model.csv", row.names = FALSE)
+```
+
+KNN
+```{r}
+train = normalize(amazon_train[amazon,],method = 'range', range = c(0,1))
+
+test = normalize(amazon_train[-amazon,], method = 'range', range = c(0,1))
+
+knn_predict = knn(train, test, cl = as.factor(train$ACTION), k = 1)
+
+test$ACTION = as.factor(test$ACTION)
+
+knn_pred = knn(amazon_train, amazon_test, cl = as.factor(amazon_train$ACTION), k =1 )
+
+knn_pred = as.data.frame(knn_pred)
+
+
+confusionMatrix(test$ACTION, knn_predict, positive = '1')
+
+knn_predict = as.data.frame(knn_predict)
+
+df6 = data.frame(Id = amazon_test$id, Action = knn_pred$knn_pred)
+
+write.csv(df6,"C:/Users/Administrator/Desktop/Machine Learning/Practice/Amazon/KNN_model.csv", row.names = FALSE)
+```
+
